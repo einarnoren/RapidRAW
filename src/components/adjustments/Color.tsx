@@ -5,7 +5,7 @@ import Slider from '../ui/Slider';
 import ColorWheel from '../ui/ColorWheel';
 import { ColorAdjustment, ColorCalibration, HueSatLum, INITIAL_ADJUSTMENTS } from '../../utils/adjustments';
 import { Adjustments, ColorGrading } from '../../utils/adjustments';
-import { AppSettings } from '../ui/AppProperties';
+import { AppSettings, SelectedImage } from '../ui/AppProperties';
 import Text from '../ui/Text';
 import { TextColors, TextVariants, TextWeights } from '../../types/typography';
 
@@ -22,7 +22,38 @@ interface ColorPanelProps {
   isWbPickerActive?: boolean;
   toggleWbPicker?: () => void;
   onDragStateChange?: (isDragging: boolean) => void;
+  selectedImage?: SelectedImage;
 }
+
+// Temperature is stored as a -100..+100 normalized offset on top of the
+// camera as-shot white balance. When we know the as-shot Kelvin (from Sony
+// MakerNote 0xb021), we can present the slider in absolute Kelvin using
+// mired-based math, with asymmetric bounds so position 0 reflects the
+// as-shot Kelvin's location on a fixed 2000K..15000K scale.
+const TEMPERATURE_MIRED_RANGE = 150;
+const VISUAL_KELVIN_MIN = 2000;
+const VISUAL_KELVIN_MAX = 15000;
+const KELVIN_SNAP = 50;
+
+const sliderToKelvin = (sliderValue: number, asShotKelvin: number): number => {
+  const miredAsShot = 1_000_000 / asShotKelvin;
+  const miredCurrent = miredAsShot - (sliderValue / 100) * TEMPERATURE_MIRED_RANGE;
+  if (miredCurrent <= 0) return VISUAL_KELVIN_MAX;
+  return Math.round(1_000_000 / miredCurrent);
+};
+
+const kelvinToSlider = (kelvin: number, asShotKelvin: number): number => {
+  const miredAsShot = 1_000_000 / asShotKelvin;
+  const miredTarget = 1_000_000 / kelvin;
+  return ((miredAsShot - miredTarget) / TEMPERATURE_MIRED_RANGE) * 100;
+};
+
+const sliderBoundsForKelvin = (asShotKelvin: number) => ({
+  min: kelvinToSlider(VISUAL_KELVIN_MIN, asShotKelvin),
+  max: kelvinToSlider(VISUAL_KELVIN_MAX, asShotKelvin),
+});
+
+const snapKelvin = (k: number) => Math.round(k / KELVIN_SNAP) * KELVIN_SNAP;
 
 interface ColorSwatchProps {
   color: string;
@@ -398,6 +429,7 @@ export default function ColorPanel({
   isWbPickerActive = false,
   toggleWbPicker,
   onDragStateChange,
+  selectedImage,
 }: ColorPanelProps) {
   const [activeColor, setActiveColor] = useState('reds');
   const adjustmentVisibility = appSettings?.adjustmentVisibility || {};
@@ -428,6 +460,37 @@ export default function ColorPanel({
 
   const handleGlobalChange = (key: ColorAdjustment, value: string) => {
     setAdjustments((prev: Partial<Adjustments>) => ({ ...prev, [key]: parseFloat(value) }));
+  };
+
+  const asShotKelvinRaw = selectedImage?.exif?.AsShotKelvin;
+  const asShotKelvin = asShotKelvinRaw ? Number(asShotKelvinRaw) : NaN;
+  const hasKelvin = Number.isFinite(asShotKelvin) && asShotKelvin > 0;
+
+  const temperatureFormatter = hasKelvin
+    ? (v: number) => `${sliderToKelvin(v, asShotKelvin)}K`
+    : undefined;
+  const temperatureEditFormatter = hasKelvin
+    ? (v: number) => String(sliderToKelvin(v, asShotKelvin))
+    : undefined;
+  const temperatureEditParser = hasKelvin
+    ? (text: string) => {
+        const cleaned = text.replace(/[^\d.]/g, '');
+        const k = parseFloat(cleaned);
+        if (!Number.isFinite(k) || k <= 0) return NaN;
+        const clamped = Math.max(VISUAL_KELVIN_MIN, Math.min(VISUAL_KELVIN_MAX, k));
+        return kelvinToSlider(clamped, asShotKelvin);
+      }
+    : undefined;
+  const temperatureBounds = hasKelvin ? sliderBoundsForKelvin(asShotKelvin) : { min: -100, max: 100 };
+
+  const handleTemperatureChange = (raw: number) => {
+    if (!hasKelvin) {
+      handleGlobalChange(ColorAdjustment.Temperature, String(raw));
+      return;
+    }
+    const snappedK = snapKelvin(sliderToKelvin(raw, asShotKelvin));
+    const snappedSlider = kelvinToSlider(snappedK, asShotKelvin);
+    handleGlobalChange(ColorAdjustment.Temperature, String(snappedSlider));
   };
 
   const handleHslChange = (key: ColorAdjustment, value: string) => {
@@ -471,13 +534,18 @@ export default function ColorPanel({
         </div>
         <Slider
           label="Temperature"
-          max={100}
-          min={-100}
-          onChange={(e: any) => handleGlobalChange(ColorAdjustment.Temperature, e.target.value)}
-          step={1}
+          max={temperatureBounds.max}
+          min={temperatureBounds.min}
+          onChange={(e: any) => handleTemperatureChange(parseFloat(e.target.value))}
+          step={hasKelvin ? 0.01 : 1}
           value={adjustments.temperature || 0}
           trackClassName="temperature-gradient-track"
           onDragStateChange={onDragStateChange}
+          valueFormatter={temperatureFormatter}
+          editFormatter={temperatureEditFormatter}
+          editParser={temperatureEditParser}
+          editMin={hasKelvin ? VISUAL_KELVIN_MIN : undefined}
+          editMax={hasKelvin ? VISUAL_KELVIN_MAX : undefined}
         />
         <Slider
           label="Tint"
