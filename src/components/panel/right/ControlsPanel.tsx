@@ -317,6 +317,7 @@ export default function Controls({
                   isWbPickerActive={isWbPickerActive}
                   toggleWbPicker={toggleWbPicker}
                   onDragStateChange={onDragStateChange}
+                  selectedImage={selectedImage}
                 />
               </CollapsibleSection>
             </div>

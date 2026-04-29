@@ -13,6 +13,7 @@ dependencies = [
  "chrono",
  "fern",
  "filetime",
+ "fpexif",
  "futures",
  "futures-util",
  "fuzzy-matcher",
@@ -1780,6 +1781,18 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "cb4cb245038516f5f85277875cdaa4f7d2c9a0fa0468de06ed190163b1581fcf"
 dependencies = [
  "percent-encoding",
+]
+
+[[package]]
+name = "fpexif"
+version = "0.0.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "03d896cc1f2ae629d0dc0fd1efc891f28b73070566e69efe55afc7021f1bbe41"
+dependencies = [
+ "byteorder",
+ "hex",
+ "paste",
+ "thiserror 1.0.69",
 ]
 
 [[package]]

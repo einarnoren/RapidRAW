@@ -1,6 +1,7 @@
 use std::collections::HashMap;
 use std::fs;
 use std::io::{BufReader, Cursor};
+use std::sync::Mutex;
 
 use crate::formats::is_raw_file;
 use chrono::{DateTime, NaiveDateTime, Utc};
@@ -9,7 +10,68 @@ use little_exif::exif_tag::ExifTag;
 use little_exif::filetype::FileExtension;
 use little_exif::metadata::Metadata;
 use little_exif::rational::{iR64, uR64};
+use once_cell::sync::Lazy;
 use rawler::decoders::RawMetadata;
+
+// EXIF + MakerNote live in the TIFF header at the start of an ARW. fpexif walks
+// the entire input even when we only need IFD0 + ExifIFD, so we cap the slice.
+const FPEXIF_SCAN_LIMIT: usize = 4 * 1024 * 1024;
+
+// fpexif parsing of an 85MB ARW takes ~35s; the Kelvin value never changes per
+// file, so memoize on a content fingerprint (len + first/last 4KB hash).
+static KELVIN_CACHE: Lazy<Mutex<HashMap<u64, Option<u32>>>> =
+    Lazy::new(|| Mutex::new(HashMap::new()));
+
+fn fingerprint_bytes(bytes: &[u8]) -> u64 {
+    use std::hash::{Hash, Hasher};
+    let mut h = std::collections::hash_map::DefaultHasher::new();
+    bytes.len().hash(&mut h);
+    let head = &bytes[..bytes.len().min(4096)];
+    head.hash(&mut h);
+    if bytes.len() > 8192 {
+        let tail = &bytes[bytes.len() - 4096..];
+        tail.hash(&mut h);
+    }
+    h.finish()
+}
+
+fn extract_makernote_kelvin(file_bytes: &[u8]) -> Option<u32> {
+    use fpexif::ExifParser;
+    use fpexif::data_types::ExifValue;
+
+    let key = fingerprint_bytes(file_bytes);
+    if let Some(cached) = KELVIN_CACHE.lock().ok().and_then(|c| c.get(&key).copied()) {
+        return cached;
+    }
+
+    let scan_slice = &file_bytes[..file_bytes.len().min(FPEXIF_SCAN_LIMIT)];
+    let result = (|| {
+        let data = ExifParser::new().parse_bytes(scan_slice).ok()?;
+        let notes = data.get_maker_notes()?;
+        // Sony ColorTemperature MakerNote tag.
+        let tag = notes.get(&0xb021)?;
+        let raw = match &tag.value {
+            ExifValue::Long(x) => x.first().copied(),
+            ExifValue::Short(x) => x.first().map(|v| *v as u32),
+            ExifValue::SLong(x) => x.first().and_then(|v| u32::try_from(*v).ok()),
+            ExifValue::SShort(x) => x.first().and_then(|v| u32::try_from(*v as i32).ok()),
+            _ => None,
+        }?;
+        if (1500..=20000).contains(&raw) {
+            Some(raw)
+        } else {
+            None
+        }
+    })();
+
+    if let Ok(mut cache) = KELVIN_CACHE.lock() {
+        if cache.len() > 256 {
+            cache.clear();
+        }
+        cache.insert(key, result);
+    }
+    result
+}
 
 fn to_ur64(val: &exif::Rational) -> uR64 {
     uR64 {
@@ -191,7 +253,13 @@ pub fn read_iso(path: &str, file_bytes: &[u8]) -> Option<u32> {
 }
 
 pub fn read_exif_data(path: &str, file_bytes: &[u8]) -> HashMap<String, String> {
-    if let Some(sidecar_exif) = read_rrexif_sidecar(std::path::Path::new(path)) {
+    if let Some(mut sidecar_exif) = read_rrexif_sidecar(std::path::Path::new(path)) {
+        if is_raw_file(path)
+            && !sidecar_exif.contains_key("AsShotKelvin")
+            && let Some(k) = extract_makernote_kelvin(file_bytes)
+        {
+            sidecar_exif.insert("AsShotKelvin".to_string(), k.to_string());
+        }
         return sidecar_exif;
     }
 
@@ -215,6 +283,8 @@ pub fn read_exif_data(path: &str, file_bytes: &[u8]) -> HashMap<String, String> 
 
 pub fn extract_metadata(file_bytes: &[u8]) -> Option<HashMap<String, String>> {
     let mut map = HashMap::new();
+
+    let makernote_kelvin = extract_makernote_kelvin(file_bytes);
 
     if let Some(exif_obj) = read_exif(file_bytes) {
         for field in exif_obj.fields() {
@@ -308,6 +378,9 @@ pub fn extract_metadata(file_bytes: &[u8]) -> Option<HashMap<String, String>> {
     }
 
     if !map.is_empty() {
+        if let Some(k) = makernote_kelvin {
+            map.insert("AsShotKelvin".to_string(), k.to_string());
+        }
         return Some(map);
     }
 
@@ -555,6 +628,10 @@ pub fn extract_metadata(file_bytes: &[u8]) -> Option<HashMap<String, String>> {
         if let Some(v) = gps.gps_map_datum {
             insert_if_present("GPSMapDatum", v);
         }
+    }
+
+    if let Some(k) = makernote_kelvin {
+        map.insert("AsShotKelvin".to_string(), k.to_string());
     }
 
     Some(map)

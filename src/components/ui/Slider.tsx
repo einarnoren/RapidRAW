@@ -21,6 +21,13 @@ interface SliderProps {
   trackClassName?: string;
   fillOrigin?: 'min' | 'default';
   suffix?: string;
+  // Optional formatters for displays whose internal value differs from what the user sees
+  // (e.g. Temperature slider shows Kelvin while value is a normalized offset).
+  valueFormatter?(value: number): string;
+  editFormatter?(value: number): string;
+  editParser?(text: string): number;
+  editMin?: number;
+  editMax?: number;
 }
 
 const DOUBLE_CLICK_THRESHOLD_MS = 300;
@@ -39,12 +46,17 @@ const Slider = ({
   trackClassName,
   fillOrigin = 'default',
   suffix = '',
+  valueFormatter,
+  editFormatter,
+  editParser,
+  editMin,
+  editMax,
 }: SliderProps) => {
   const [displayValue, setDisplayValue] = useState<number>(value);
   const [isDragging, setIsDragging] = useState(false);
   const animationFrameRef = useRef<number | undefined>(undefined);
   const [isEditing, setIsEditing] = useState(false);
-  const [inputValue, setInputValue] = useState<string>(String(value));
+  const [inputValue, setInputValue] = useState<string>(editFormatter ? editFormatter(value) : String(value));
   const inputRef = useRef<HTMLInputElement | null>(null);
   const rangeInputRef = useRef<HTMLInputElement | null>(null);
   const [isLabelHovered, setIsLabelHovered] = useState(false);
@@ -228,9 +240,9 @@ const Slider = ({
 
   useEffect(() => {
     if (!isEditing) {
-      setInputValue(String(value));
+      setInputValue(editFormatter ? editFormatter(value) : String(value));
     }
-  }, [value, isEditing]);
+  }, [value, isEditing, editFormatter]);
 
   useEffect(() => {
     if (isEditing && inputRef.current) {
@@ -345,7 +357,7 @@ const Slider = ({
   };
 
   const handleInputCommit = () => {
-    let newValue = parseFloat(inputValue);
+    let newValue = editParser ? editParser(inputValue) : parseFloat(inputValue);
     if (isNaN(newValue)) {
       newValue = value;
     } else {
@@ -417,14 +429,14 @@ const Slider = ({
           {isEditing ? (
             <input
               className="w-full text-sm text-right bg-card-active border border-gray-500 rounded-sm px-1 py-0 outline-none focus:ring-1 focus:ring-blue-500 text-text-primary"
-              max={max}
-              min={min}
+              max={editMax ?? max}
+              min={editMin ?? min}
               onBlur={handleInputCommit}
               onChange={handleInputChange}
               onKeyDown={handleInputKeyDown}
               ref={inputRef}
               step={step}
-              type="number"
+              type={editParser ? 'text' : 'number'}
               value={inputValue}
             />
           ) : (
@@ -434,8 +446,14 @@ const Slider = ({
               onDoubleClick={handleReset}
               data-tooltip={`Click to edit`}
             >
-              {decimalPlaces > 0 && numericValue === 0 ? '0' : numericValue.toFixed(decimalPlaces)}
-              {suffix && <span className="text-[10px] align-top inline-block mt-0.5 ml-0.5">{suffix}</span>}
+              {valueFormatter
+                ? valueFormatter(numericValue)
+                : decimalPlaces > 0 && numericValue === 0
+                  ? '0'
+                  : numericValue.toFixed(decimalPlaces)}
+              {suffix && !valueFormatter && (
+                <span className="text-[10px] align-top inline-block mt-0.5 ml-0.5">{suffix}</span>
+              )}
             </span>
           )}
         </div>
