@@ -254,10 +254,17 @@ pub fn read_iso(path: &str, file_bytes: &[u8]) -> Option<u32> {
     None
 }
 
-pub fn extract_metadata(file_bytes: &[u8]) -> Option<HashMap<String, String>> {
+fn extract_metadata_inner(
+    file_bytes: &[u8],
+    with_makernote: bool,
+) -> Option<HashMap<String, String>> {
     let mut map = HashMap::new();
 
-    let makernote_kelvin = extract_makernote_kelvin(file_bytes);
+    let makernote_kelvin = if with_makernote {
+        extract_makernote_kelvin(file_bytes)
+    } else {
+        None
+    };
 
     if let Some(exif_obj) = read_exif(file_bytes) {
         for field in exif_obj.fields() {
@@ -1135,8 +1142,16 @@ pub fn read_rrexif_sidecar(image_path: &Path) -> Option<HashMap<String, String>>
 }
 
 pub fn read_exif_data_from_bytes(path: &str, file_bytes: &[u8]) -> HashMap<String, String> {
+    read_exif_data_from_bytes_inner(path, file_bytes, true)
+}
+
+fn read_exif_data_from_bytes_inner(
+    path: &str,
+    file_bytes: &[u8],
+    with_makernote: bool,
+) -> HashMap<String, String> {
     if is_raw_file(path)
-        && let Some(map) = extract_metadata(file_bytes)
+        && let Some(map) = extract_metadata_inner(file_bytes, with_makernote)
     {
         return map;
     }
@@ -1154,9 +1169,22 @@ pub fn read_exif_data_from_bytes(path: &str, file_bytes: &[u8]) -> HashMap<Strin
 }
 
 pub fn read_exif_data(path: &str, file_bytes: &[u8]) -> HashMap<String, String> {
+    read_exif_data_internal(path, file_bytes, true)
+}
+
+pub fn read_exif_data_fast(path: &str, file_bytes: &[u8]) -> HashMap<String, String> {
+    read_exif_data_internal(path, file_bytes, false)
+}
+
+fn read_exif_data_internal(
+    path: &str,
+    file_bytes: &[u8],
+    with_makernote: bool,
+) -> HashMap<String, String> {
     let source_path = Path::new(path);
     if let Some(mut sidecar_exif) = read_rrexif_sidecar(source_path) {
-        if is_raw_file(path)
+        if with_makernote
+            && is_raw_file(path)
             && !sidecar_exif.contains_key("AsShotKelvin")
             && let Some(k) = extract_makernote_kelvin(file_bytes)
         {
@@ -1165,8 +1193,8 @@ pub fn read_exif_data(path: &str, file_bytes: &[u8]) -> HashMap<String, String> 
         return sidecar_exif;
     }
 
-    let exif_map = read_exif_data_from_bytes(path, file_bytes);
-    if !exif_map.is_empty() {
+    let exif_map = read_exif_data_from_bytes_inner(path, file_bytes, with_makernote);
+    if with_makernote && !exif_map.is_empty() {
         let mut metadata = load_primary_metadata(source_path);
         metadata.exif = Some(exif_map.clone());
         let _ = save_primary_metadata(source_path, &metadata);

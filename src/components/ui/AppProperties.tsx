@@ -194,6 +194,7 @@ export interface AppSettings {
   enableFocusMode?: boolean;
   openTreeSections?: string[];
   folderIcons?: Record<string, string>;
+  storagePerformance?: 'fast' | 'slow';
 }
 
 export interface BrushSettings {

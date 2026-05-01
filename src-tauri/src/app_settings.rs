@@ -379,6 +379,8 @@ pub struct AppSettings {
     pub enable_focus_mode: Option<bool>,
     #[serde(default)]
     pub folder_icons: Option<HashMap<String, String>>,
+    #[serde(default)]
+    pub storage_performance: Option<String>,
 }
 
 impl Default for AppSettings {
@@ -458,6 +460,7 @@ impl Default for AppSettings {
             default_non_raw_tonemapper: Some("basic".to_string()),
             enable_focus_mode: Some(false),
             folder_icons: Some(HashMap::new()),
+            storage_performance: Some("fast".to_string()),
         }
     }
 }
