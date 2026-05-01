@@ -45,6 +45,7 @@ fn extract_makernote_kelvin(file_bytes: &[u8]) -> Option<u32> {
     }
 
     let scan_slice = &file_bytes[..file_bytes.len().min(FPEXIF_SCAN_LIMIT)];
+    let _t = std::time::Instant::now();
     let result = (|| {
         let data = ExifParser::new().parse_bytes(scan_slice).ok()?;
         let notes = data.get_maker_notes()?;
@@ -63,6 +64,12 @@ fn extract_makernote_kelvin(file_bytes: &[u8]) -> Option<u32> {
             None
         }
     })();
+    log::info!(
+        "[fpexif] parse {}MB slice took {}ms (result={:?})",
+        scan_slice.len() / (1024 * 1024),
+        _t.elapsed().as_millis(),
+        result
+    );
 
     if let Ok(mut cache) = KELVIN_CACHE.lock() {
         if cache.len() > 256 {
@@ -253,19 +260,35 @@ pub fn read_iso(path: &str, file_bytes: &[u8]) -> Option<u32> {
 }
 
 pub fn read_exif_data(path: &str, file_bytes: &[u8]) -> HashMap<String, String> {
+    read_exif_data_inner(path, file_bytes, true)
+}
+
+pub fn read_exif_data_fast(path: &str, file_bytes: &[u8]) -> HashMap<String, String> {
+    read_exif_data_inner(path, file_bytes, false)
+}
+
+fn read_exif_data_inner(
+    path: &str,
+    file_bytes: &[u8],
+    with_makernote: bool,
+) -> HashMap<String, String> {
+    let _t = std::time::Instant::now();
     if let Some(mut sidecar_exif) = read_rrexif_sidecar(std::path::Path::new(path)) {
-        if is_raw_file(path)
+        if with_makernote
+            && is_raw_file(path)
             && !sidecar_exif.contains_key("AsShotKelvin")
             && let Some(k) = extract_makernote_kelvin(file_bytes)
         {
             sidecar_exif.insert("AsShotKelvin".to_string(), k.to_string());
         }
+        log::info!("[exif] read_exif_data DONE (sidecar) {}ms", _t.elapsed().as_millis());
         return sidecar_exif;
     }
 
     if is_raw_file(path)
-        && let Some(map) = extract_metadata(file_bytes)
+        && let Some(map) = extract_metadata_inner(file_bytes, with_makernote)
     {
+        log::info!("[exif] read_exif_data DONE (raw extract_metadata) {}ms", _t.elapsed().as_millis());
         return map;
     }
 
@@ -278,15 +301,28 @@ pub fn read_exif_data(path: &str, file_bytes: &[u8]) -> HashMap<String, String> 
             );
         }
     }
+    log::info!("[exif] read_exif_data DONE (kamadak) {}ms", _t.elapsed().as_millis());
     exif_data
 }
 
-pub fn extract_metadata(file_bytes: &[u8]) -> Option<HashMap<String, String>> {
+fn extract_metadata_inner(
+    file_bytes: &[u8],
+    with_makernote: bool,
+) -> Option<HashMap<String, String>> {
+    let _t = std::time::Instant::now();
     let mut map = HashMap::new();
 
-    let makernote_kelvin = extract_makernote_kelvin(file_bytes);
+    let makernote_kelvin = if with_makernote {
+        let r = extract_makernote_kelvin(file_bytes);
+        log::info!("[exif] extract_metadata: after makernote_kelvin {}ms", _t.elapsed().as_millis());
+        r
+    } else {
+        None
+    };
 
+    let _t_kamadak = std::time::Instant::now();
     if let Some(exif_obj) = read_exif(file_bytes) {
+        log::info!("[exif] kamadak read_exif {}ms", _t_kamadak.elapsed().as_millis());
         for field in exif_obj.fields() {
             match field.tag {
                 exif::Tag::ExposureTime => {
@@ -381,10 +417,13 @@ pub fn extract_metadata(file_bytes: &[u8]) -> Option<HashMap<String, String>> {
         if let Some(k) = makernote_kelvin {
             map.insert("AsShotKelvin".to_string(), k.to_string());
         }
+        log::info!("[exif] extract_metadata DONE (kamadak path) {}ms", _t.elapsed().as_millis());
         return Some(map);
     }
 
+    let _t_rawler = std::time::Instant::now();
     let metadata = read_raw_metadata(file_bytes)?;
+    log::info!("[exif] rawler read_raw_metadata {}ms", _t_rawler.elapsed().as_millis());
 
     let exif = metadata.exif;
 

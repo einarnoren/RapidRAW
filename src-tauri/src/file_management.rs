@@ -191,9 +191,9 @@ pub async fn read_exif_for_paths(
             {
                 sidecar_exif
             } else if let Ok(mmap) = read_file_mapped(&source_path) {
-                crate::exif_processing::read_exif_data(&source_path_str, &mmap)
+                crate::exif_processing::read_exif_data_fast(&source_path_str, &mmap)
             } else if let Ok(bytes) = fs::read(&source_path) {
-                crate::exif_processing::read_exif_data(&source_path_str, &bytes)
+                crate::exif_processing::read_exif_data_fast(&source_path_str, &bytes)
             } else {
                 HashMap::new()
             };
@@ -1079,7 +1079,16 @@ pub fn start_thumbnail_workers(app_handle: tauri::AppHandle) {
     let state = app_handle.state::<crate::AppState>();
     let manager = state.thumbnail_manager.clone();
     let settings = load_settings(app_handle.clone()).unwrap_or_default();
-    let thread_count = settings.thumbnail_worker_threads.unwrap_or(4).clamp(1, 16);
+    let is_slow_storage = settings
+        .storage_performance
+        .as_deref()
+        .map(|s| s.eq_ignore_ascii_case("slow"))
+        .unwrap_or(false);
+    let thread_count = if is_slow_storage {
+        1
+    } else {
+        settings.thumbnail_worker_threads.unwrap_or(4).clamp(1, 16)
+    };
 
     for _ in 0..thread_count {
         let app_clone = app_handle.clone();

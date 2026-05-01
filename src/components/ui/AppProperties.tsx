@@ -187,6 +187,7 @@ export interface AppSettings {
   tonemapperOverrideEnabled?: boolean;
   defaultRawTonemapper?: string;
   defaultNonRawTonemapper?: string;
+  storagePerformance?: 'fast' | 'slow';
 }
 
 export interface BrushSettings {

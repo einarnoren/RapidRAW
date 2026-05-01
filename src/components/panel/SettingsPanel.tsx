@@ -462,6 +462,7 @@ export default function SettingsPanel({
       appSettings?.useWgpuRenderer ?? (osPlatform === 'linux' || osPlatform === 'android' ? false : true),
     thumbnailWorkerThreads: appSettings?.thumbnailWorkerThreads ?? 4,
     imageCacheSize: appSettings?.imageCacheSize ?? 5,
+    storagePerformance: appSettings?.storagePerformance ?? 'fast',
   });
   const [restartRequired, setRestartRequired] = useState(false);
   const [activeCategory, setActiveCategory] = useState('general');
@@ -511,6 +512,7 @@ export default function SettingsPanel({
       useWgpuRenderer: appSettings?.useWgpuRenderer ?? true,
       thumbnailWorkerThreads: appSettings?.thumbnailWorkerThreads ?? 4,
       imageCacheSize: appSettings?.imageCacheSize ?? 5,
+      storagePerformance: appSettings?.storagePerformance ?? 'fast',
     });
     setRestartRequired(false);
   }, [appSettings]);
@@ -1632,8 +1634,23 @@ export default function SettingsPanel({
                     </SettingItem>
 
                     <SettingItem
+                      label="Storage Performance"
+                      description="Set this to Slow if your photos are on a hard drive (HDD), a network share, or a cloud-mounted folder (Proton Drive, OneDrive, Dropbox, iCloud). Slow mode forces a single thumbnail worker to avoid disk seek thrashing, skips Sony Kelvin extraction during library scans (Kelvin is still read when you open an image), and dramatically speeds up loading individual photos when the library is still indexing. SSD/NVMe users should leave this on Fast."
+                    >
+                      <Dropdown
+                        onChange={(value: any) => handleProcessingSettingChange('storagePerformance', value)}
+                        options={[
+                          { value: 'fast', label: 'Fast (SSD / NVMe)' },
+                          { value: 'slow', label: 'Slow (HDD / Network / Cloud)' },
+                        ]}
+                        value={processingSettings.storagePerformance}
+                        triggerClassName="bg-bg-primary"
+                      />
+                    </SettingItem>
+
+                    <SettingItem
                       label="Thumbnail Worker Threads"
-                      description="Number of parallel threads used to generate thumbnails. Higher values speed up library loading but use more CPU & RAM."
+                      description="Number of parallel threads used to generate thumbnails. Higher values speed up library loading but use more CPU & RAM. Ignored when Storage Performance is set to Slow (forced to 1)."
                     >
                       <Slider
                         label="Threads"
